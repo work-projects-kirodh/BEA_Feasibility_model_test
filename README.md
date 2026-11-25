@@ -18,6 +18,8 @@ python -m pytest -q                           # tests
 
 Each run writes to `results/<run_name>/`: `feedstock_routes_all.csv` (one row per feedstock point and facility: tonnes, access type, virtual-road and road distances by road class), `facility_costs.csv` (one row per facility: capex/opex, haulage, fleet, equivalent annual cost, R/t, R/GJ, R/kWh), `scenario_summary.csv`, `scenarios/<technology>_<capacity>/spatial.gpkg` (layers `facilities`, `feedstock_points`, `paths`, `catchments`), `run.log` and `run_manifest.json`. Inputs are never modified and earlier runs are never deleted.
 
+**Full instructions (data sources, projections, data preparation, every setting, outputs): see [`USER_GUIDE.md`](USER_GUIDE.md).**
+
 All defaults (the values that were hard-coded in the original scripts) are listed and explained in `config.toml`. What changed and why is described in `bea_feasibility_upgrades.txt`. The original 2021 scripts are kept in `legacy/` for reference only; the description below is the original method description.
 
 
