@@ -1,0 +1,85 @@
+# BEA generalisable feasibility model settings.
+# Every value below is the DEFAULT ("original" = the value hard-coded in the 2021 scripts).
+# Change values here, pass another file with  python run_bea.py --config my.toml
+# or override single values:  python run_bea.py --set costs.discount_rate=0.1
+# Lists on the command line:  --set scenario.capacities_t=[30000,60000]
+# Relative paths are resolved against the folder of the config file.
+
+[paths]
+feedstock = "inputs/KZN_resampled.shp"               # feedstock polygons
+roads = "inputs/BEA_roads1.shp"                      # road network
+vr_start_vertices = "data/start_vertices.shp"        # virtual-road starts (or bea_start_vertices.gpkg
+vr_end_vertices = "data/end_vertices.shp"            #   / bea_end_vertices.gpkg from Virtual_roads v2)
+vr_proximity_raster = "data/VR_roads_100m_proximity.tif"
+road_proximity_raster = "data/NGI_roads_100m_proximity.tif"
+cost_curves = "parameters/Technology_cost_curves.csv"
+product_energy = "parameters/Biofuel energy densities.csv"
+output_dir = "results"                               # runs go to <output_dir>/<run_name>/
+run_name = ""                                        # "" = timestamp; reuse a name to resume
+
+[scenario]
+feedstock_name = "Aliens"                            # original
+technologies = ["CBP-Pelleting"]                     # IDs from the cost-curve table (original)
+capacities_t = [24000, 48000, 84000]                 # t/yr, run for every technology (original)
+                                                     # [] = use each technology's 3 curve capacities
+
+[fields]
+id_field = "NbalId"            # feedstock id (original attribute position 1)
+area_field = "Area"            # hectares (original position 2)
+volume_field = "CSIR_T"        # tonnes (original position 14)
+road_class_field = "FEAT_TYPE"
+vr_id_field = "fid2"
+vr_length_field = "length"     # metres
+
+[data]
+drop_duplicate_features = true # remove exact duplicate feedstock features (same id + geometry)
+min_volume_t = 0.0             # points with volume <= this are ignored (original: <= 0)
+working_crs = ""               # "" = UTM zone estimated from the data; or e.g. "EPSG:32736"
+output_crs = "EPSG:4326"       # CRS of written layers (original WGS84)
+
+[clustering]
+facility_location = "weighted_mean"  # weighted_mean (original) | geometric_median
+weight_by = "contributed"            # contributed (fix) | available (original behaviour)
+remaining_tolerance_t = 0.001        # leftover volume below this counts as used up
+
+[access]
+method = "raster"              # raster (original proximity rasters, vector fallback) | vector
+vr_candidates = 4              # nearest VR start vertices considered (original: 4)
+
+[network]
+use_exclusions = false                       # original: false
+excluded_classes = ["bad road", "Dirt Road"] # original list, used when use_exclusions = true
+class_weight_factors = {}                    # e.g. { "Street" = 1.2, "Other Road" = 1.5 }
+unreachable_tortuosity = 1.3                 # straight-line x factor when no network path exists
+node_precision_m = 0.001                     # coordinate rounding used to join road vertices
+
+[costs]
+time_horizon_years = 0             # 0 = plant lifespan from the cost curve (original behaviour)
+discount_rate = 0.06               # original used "inflation" (6%) as the rate
+escalation_rate = 0.06             # yearly growth of operating costs (original inflation)
+cost_curve_method = "loglinear"    # loglinear | nearest | first (original always used point 1)
+capex_basis = "throughput"         # throughput (original: t contributed) | capacity (plant size)
+road_speed_kmh = 50.0              # original
+offroad_speed_kmh = 8.0            # original
+hours_per_day = 8.0                # original
+truck_working_days = 260           # original
+truck_annual_km = 100000.0         # original
+road_payload_t = 26.0              # original
+offroad_payload_t = 4.0            # original
+truck_standing_cost_r_per_year = 923352.0    # original (Fleetwatch 2019)
+truck_variable_cost_r_per_year = 1093536.0   # original
+offroad_haulage_r_per_hour = 453.31          # original (SASRI)
+load_cost_r_per_t = 14.4           # original
+unload_cost_r_per_t = 12.32        # original
+harvest_cost_r_per_ha = 0.0        # original (was defined but never used)
+round_up_trips = false             # original: fractional trips
+cost_access_as_offroad = true      # cost point->road and point->VR-start distances at tractor rate
+min_haul_distance_m = 0.0          # minimum one-way haul per feedstock point (0 = off)
+
+[output]
+write_catchments = true
+
+[run]
+log_level = "INFO"
+overwrite = false                  # allow writing into an existing run folder
+resume = true                      # re-running an existing run_name skips finished scenarios

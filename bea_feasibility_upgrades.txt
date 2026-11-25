@@ -1,0 +1,222 @@
+BEA GENERALISABLE FEASIBILITY MODEL - UPGRADES AND FIXES (version 2.0, branch "laptop", 2026-11-25)
+====================================================================================================
+
+Issue IDs refer to ../draft.txt (my review B1-B13 and test findings T-B1..T-B11) and to
+suggested_improvements_bea_feasibilty.docx (D-01..D-49).
+
+
+1. HOW TO RUN (one unbroken command - siting, routing AND costs)
+----------------------------------------------------------------------------------------------------
+    python run_bea.py                                     # example with the defaults
+    python run_bea.py --config my_scenario.toml           # your own settings file
+    python run_bea.py --set scenario.capacities_t=[30000] --set costs.discount_rate=0.1
+    python run_bea.py --set paths.run_name=base           # same name again = resume
+    python run_bea.py --print-config                      # see every setting
+    python -m pytest -q                                   # 18 tests, ~20-40 s
+
+Before: BEA_model_test.py (crashed on current GDAL), then hand-edit absolute macOS paths in
+Process_feasibility_options.py and run it separately. Now: one command, ~30 s for the example.
+
+Environment: Python 3.12 with GDAL, geopandas, rasterio, scipy, networkx >= 3
+(requirements.txt / environment.yml). Tested in the conda env "mucp".
+
+Output of a run: results/<run_name>/
+    feedstock_routes_all.csv     one row per (facility, feedstock point): ids, tonnes, access
+                                 type, VR id/length, access distance, road distance per class,
+                                 route status
+    facility_costs.csv           one row per facility: capex/opex per t (from the curve), CRF,
+                                 haulage km/trips/fleet, year-1 costs, NPV, equivalent annual
+                                 cost, R per feedstock t, R per product t, R/GJ, R/kWh
+    scenario_summary.csv         one row per technology x capacity
+    scenarios/<tech>_<cap>/      feedstock_routes.csv + spatial.gpkg (facilities,
+                                 feedstock_points, paths, catchments) + DONE marker
+    run.log, run_manifest.json   log; settings, versions, input SHA-256, per-scenario stats
+
+
+2. NEW FILE LAYOUT
+----------------------------------------------------------------------------------------------------
+    run_bea.py           command-line entry point
+    config.toml          every setting, its default and an explanation
+    bea/config.py        defaults + TOML + --set overrides + validation
+    bea/data.py          loading/validation, duplicate removal, centroids, VR vertex pairing
+    bea/cluster.py       facility location-allocation (greedy nearest-neighbour fill)
+    bea/access.py        existing road vs virtual road decision, VR mapping
+    bea/network.py       road graph (geopandas -> networkx), snapping, Dijkstra routing
+    bea/spatial.py       one scenario: cluster -> access -> route, one record per point
+    bea/costs.py         cost of production (finance, cost curve, haulage, energy)
+    bea/pipeline.py      runs everything, resume, outputs, manifest
+    tests/test_bea.py    unit tests + full example run
+    legacy/              original 2021 scripts, unchanged (reference only, see legacy/README.txt)
+    pytest.ini           restricts pytest to tests/ (see section 7 - important)
+    requirements.txt, environment.yml, .gitignore (results/, __pycache__, *.aux.xml);
+    the committed Python 3.7 __pycache__ files were removed from git.
+
+
+3. FIXES - things that stopped the original from running
+----------------------------------------------------------------------------------------------------
+ - T-B1   VR vertex files are MultiPoint; GetX() crashed on current GDAL
+          -> vertices read with geopandas and exploded to Points (data.load_vr_vertices).
+ - T-B3 / B6(a)  nx.read_shp removed in NetworkX 3
+          -> graph built directly from the road GeoDataFrame (network.RoadNetwork).
+ - D-12 / T-B8 / B7  absolute macOS paths in the cost script
+          -> all paths in config.toml, relative to the config file; cost step is part of
+             the same run.
+ - D-22 / T-B2 / B8  every run deleted outputs/ (a crash after 9 s destroyed all results)
+          -> each run has its own folder; nothing is deleted; run.resume continues a crashed
+             run from the first unfinished scenario.
+ - D-08 / B10  KeyError when a start point could not reach the facility
+          -> status "unreachable_fallback" with straight-line x network.unreachable_tortuosity;
+             the run continues and the facility cost row counts such routes.
+ - D-16   IndexError with fewer than 4 VR candidates -> any number of candidates works.
+ - D-29/D-30/D-31  routing returned None / sets; bare excepts -> single code path, no bare
+          excepts, explicit statuses.
+
+
+4. FIXES - things that made the numbers wrong
+----------------------------------------------------------------------------------------------------
+Spatial threads
+ - T-B4   84 duplicate feedstock features (+18.9% feedstock, inflated catchments, D-03)
+          -> exact duplicates (same id + geometry) removed (data.drop_duplicate_features);
+             example total 191 581 t -> 161 124 t.
+ - T-B5 / B3  start points were reordered (road first, VR second) but ids/tonnes/areas/VR
+          distances were not: 96% of rows described another point's path
+          -> one record per point carried through every step (spatial.run_scenario);
+             a regression test checks every path starts at its own point.
+ - B1 / D-02  depleted points removed by VALUE; ids searched in a non-unique field
+          -> points tracked by integer index; unique point_key per feedstock record.
+ - D-03 / B2  catchments selected by the non-unique NbalId -> selected by point_key.
+ - D-07   string ids written into integer fields (all stored as 0) -> string fields.
+ - D-13 / B11  facility weighted by AVAILABLE volume -> weighted by CONTRIBUTED tonnes
+          (clustering.weight_by = "available" restores the original).
+ - D-17   58 VR start vertices without an end vertex misaligned the VR lists
+          -> start and end are joined on fid2; unmatched starts are excluded and logged.
+ - D-14 / B6(c)  proximity raster read without bounds check (negative index wrap-around)
+          -> out-of-raster or NoData points use an exact vector test instead.
+ - B6(b)  relied on GDAL 3 lat/lon axis swap -> pyproj Transformer with always_xy.
+ - D-15   unknown road classes shifted the distance columns
+          -> distances kept in a dictionary by class; one column per class in the data
+             (road_m_<class>), plus road_m and total_m.
+ - D-11 (spatial) / B11 / D-19  everything in degrees; EPSG:32662 snapping
+          -> one projected working CRS (UTM zone estimated from the data, or data.working_crs);
+             all distances, buffers and clustering in metres.
+ - D-09   exclusion list built but never used -> network.use_exclusions + excluded_classes
+          (default false = original behaviour) and class_weight_factors.
+ - D-21 / T-B10  zero-length paths silently cost nothing -> status "zero_distance" and an
+          optional costs.min_haul_distance_m.
+ - D-36   volumes rounded to 3 decimals each step -> no rounding; tolerance setting.
+ - D-25   "time" field was kilometres -> removed; trips, km and fleet sizes in the cost table.
+Cost thread (bea/costs.py)
+ - D-04 / D-05 / B5(c)  AVE_LTC and pv were not finance formulas; inflation used as the
+          discount rate -> capital recovery factor and present value of an escalating annuity,
+          with costs.discount_rate and costs.escalation_rate as separate settings.
+ - D-06 / B4  cost curve always used point 1 (all capacities priced as 24 000 t)
+          -> log-linear interpolation between the three curve points
+             (cost_curve_method = loglinear | nearest | first).
+ - B5(a)  road cost = n_trucks x CPK x km (double counting) -> CPK x km; fleet size reported.
+ - B5(b)  "annual" total added full capex and LIFETIME opex (5.7x)
+          -> equivalent annual cost = capex x CRF + PV(operating) x CRF.
+ - D-11   energy_generation_Rand_kwh was R per MJ -> cost_r_per_gj and cost_r_per_kwh.
+ - D-26   user time horizon silently replaced -> costs.time_horizon_years (0 = curve lifespan).
+ - D-24 / B9  munging_csv re-read its own outputs -> no directory walking; tables passed
+          directly.
+ - D-47   capex/opex/harvest_cost defined but unused -> harvest_cost_r_per_ha is applied;
+          capex/opex come from the cost curve.
+ - D-34   str.match prefix matching on untrimmed names -> exact, trimmed, case-insensitive.
+ - Access distances (point -> road, point -> VR start) were ignored -> reported as access_m
+          and costed at the tractor rate (costs.cost_access_as_offroad, default true).
+
+Not changed (data issues for the parameter owner): D-35 "Electricity, 1 MJ/kg" in
+Biofuel energy densities.csv (should probably be 3.6), D-10/D-39 single Efficiency column
+used as a mass yield. Both are explained in section 8.
+
+
+5. ALGORITHM IMPROVEMENTS
+----------------------------------------------------------------------------------------------------
+a) Global road graph instead of per-facility clipping. The graph (54 867 nodes for the
+   example) is built once. For each facility the facility and its points are snapped onto
+   their nearest road segment by temporarily splitting that edge (several points on one
+   segment are chained in order), one Dijkstra runs from the facility, and the graph is
+   restored. No clip rectangle can split the network any more, and the original
+   shapefile write/read round trips are gone.
+b) Clustering in metres with contributed-tonne weights, plus an optional geometric median
+   (clustering.facility_location = geometric_median) that minimises tonne-distance to the
+   facility instead of using the centroid.
+c) Access model: original raster rule (existing road wins ties) with an exact vector
+   fallback; nearest of 4 VR candidates, ties to the shortest VR (original rule); access
+   distances are now costed.
+d) Cost model: proper finance, interpolated cost curve, CPK x km haulage, fleet sizing,
+   NPV and equivalent annual cost, R per feedstock tonne / product tonne / GJ / kWh.
+e) Robustness: per-scenario outputs with a DONE marker, resume, run manifest with input
+   hashes and library versions, statuses instead of crashes.
+f) Direct hand-over from Virtual_roads v2: set paths.vr_start_vertices /
+   paths.vr_end_vertices to its bea_start_vertices.gpkg / bea_end_vertices.gpkg (tested).
+
+
+6. SETTINGS (all in config.toml; defaults = original hard-coded values where one existed)
+----------------------------------------------------------------------------------------------------
+[paths]      feedstock, roads, vr_start_vertices, vr_end_vertices, vr_proximity_raster,
+             road_proximity_raster, cost_curves, product_energy, output_dir, run_name
+[scenario]   feedstock_name = Aliens, technologies = [CBP-Pelleting],
+             capacities_t = [24000, 48000, 84000] ([] = the 3 curve capacities)
+[fields]     id_field = NbalId, area_field = Area, volume_field = CSIR_T (were positions
+             [1, 2, 14]), road_class_field = FEAT_TYPE, vr_id_field = fid2, vr_length_field
+[data]       drop_duplicate_features = true, min_volume_t = 0, working_crs = "" (auto UTM),
+             output_crs = EPSG:4326
+[clustering] facility_location = weighted_mean, weight_by = contributed, remaining_tolerance_t
+[access]     method = raster, vr_candidates = 4
+[network]    use_exclusions = false, excluded_classes = ["bad road", "Dirt Road"],
+             class_weight_factors = {}, unreachable_tortuosity = 1.3, node_precision_m
+[costs]      time_horizon_years = 0, discount_rate = 0.06, escalation_rate = 0.06,
+             cost_curve_method = loglinear, capex_basis = throughput, road_speed_kmh = 50,
+             offroad_speed_kmh = 8, hours_per_day = 8, truck_working_days = 260,
+             truck_annual_km = 100000, road_payload_t = 26, offroad_payload_t = 4,
+             truck_standing_cost_r_per_year = 923352, truck_variable_cost_r_per_year = 1093536,
+             offroad_haulage_r_per_hour = 453.31, load_cost_r_per_t = 14.4,
+             unload_cost_r_per_t = 12.32, harvest_cost_r_per_ha = 0, round_up_trips = false,
+             cost_access_as_offroad = true, min_haul_distance_m = 0
+[output]     write_catchments = true
+[run]        log_level = INFO, overwrite = false, resume = true
+Unknown keys or wrong types are rejected with a clear error message.
+
+
+7. TESTS AND RESULTS
+----------------------------------------------------------------------------------------------------
+pytest: 18 passed. Covers config (defaults == config.toml, list/map overrides, validation),
+finance identities (CRF 6%/20y = 0.087185, annuity PV = 11.4699), cost-curve interpolation,
+clustering (mass balance, nearest fill, repeated volumes, contributed weights, geometric
+median), network (snapping/splitting, graph restored, unreachable fallback, zero distance,
+class weights, exclusions), access (VR vs road, ties), haulage = CPK x km, and the full
+example (complete, mass balance, economies of scale, rows aligned with their own paths,
+string ids, all layers, resume).
+
+IMPORTANT incident during testing: pytest's default discovery collected the legacy
+BEA_model_test.py (it matches "*_test.py") and EXECUTED it, which deleted the committed
+outputs/ folder. It was restored from git immediately (git checkout -- outputs/) and
+pytest.ini (testpaths = tests) was added to both repos so this cannot happen again; the
+legacy scripts were moved to legacy/.
+
+Example results (default settings, ~30 s):
+    84 duplicates removed; 369 feedstock points; 161 124.3 t; road graph 16 components.
+    capacity   facilities  mean % full   R per feedstock t   transport R/t   R per GJ
+    24 000 t       7           95.9           2 386               39            174
+    48 000 t       4           83.9           1 881               42            137
+    84 000 t       2           95.9           1 597               52            117
+    Every scenario allocates exactly the input tonnage; 0-2 zero-distance routes per
+    scenario, 0 unreachable. Compare: the legacy cost thread gave ~R23 500 per tonne for
+    every facility and every capacity.
+    Tonne-weighted one-way road distance 7.5 / 9.5 / 15.4 km (legacy 6.6 / 10.3 / 15.7 km).
+
+
+8. KNOWN LIMITATIONS / FUTURE WORK (not done in this upgrade)
+----------------------------------------------------------------------------------------------------
+- Parameter data: Biofuel energy densities.csv lists Electricity = 1 MJ/kg (D-35, likely
+  3.6); "Technology cost curves.csv" (slope/intercept form) and BioEnergy_impacts.csv,
+  Feedstock_energy_densities.csv are still unused. Check with the data owner.
+- Energy balance (D-10/D-39): product = tonnes x Efficiency%, i.e. a mass yield; moisture,
+  dry matter and feedstock heating values are not modelled.
+- Tonnes per feedstock point are treated as tonnes PER YEAR (original assumption).
+- No construction cost for virtual roads; no road-class speeds (class_weight_factors only
+  change route choice); clustering is still greedy (a capacitated facility-location MILP is
+  the next step, see the review document section 7.1 C).
+- Committed outputs/ (2021 example, incomplete - no 84 000 t rows, T-B7), data/ and
+  gdal-data/ are left in place; the new code does not use outputs/ or gdal-data/.

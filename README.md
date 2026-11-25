@@ -1,8 +1,25 @@
 # BioEnergy Atlas Modelling Script test example
  
 @ Main authors: Marc Pienaar (marc@saeon.ac.za, marc.pienaar@gmail.com) and Hayden Wilson (hayden@saeon.ac.za)
-Run the BEA_model_test.py file to see what the model does. When the model example has run, Run the Process_feasibility_options.py file to create a simple cost of production output using user defined parameters. 
-Outputs are generated in an output folder
+
+Quick start (version 2, 2026 upgrade)
+-----------------
+The whole model - facility siting, road/virtual-road access, routing AND the cost of production - now runs in one command, and every setting can be changed without editing code:
+
+```
+conda env create -f environment.yml        # or use an env with the packages in requirements.txt
+python run_bea.py                          # example: CBP-Pelleting at 24 000, 48 000 and 84 000 t/yr
+python run_bea.py --set scenario.capacities_t=[30000] --set costs.discount_rate=0.1
+python run_bea.py --config my_scenario.toml
+python run_bea.py --set paths.run_name=base   # re-running the same run_name resumes it
+python run_bea.py --print-config              # every setting and its current value
+python -m pytest -q                           # tests
+```
+
+Each run writes to `results/<run_name>/`: `feedstock_routes_all.csv` (one row per feedstock point and facility: tonnes, access type, virtual-road and road distances by road class), `facility_costs.csv` (one row per facility: capex/opex, haulage, fleet, equivalent annual cost, R/t, R/GJ, R/kWh), `scenario_summary.csv`, `scenarios/<technology>_<capacity>/spatial.gpkg` (layers `facilities`, `feedstock_points`, `paths`, `catchments`), `run.log` and `run_manifest.json`. Inputs are never modified and earlier runs are never deleted.
+
+All defaults (the values that were hard-coded in the original scripts) are listed and explained in `config.toml`. What changed and why is described in `bea_feasibility_upgrades.txt`. The original 2021 scripts are kept in `legacy/` for reference only; the description below is the original method description.
+
 
 Quick description
 -----------------
